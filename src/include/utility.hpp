@@ -2,11 +2,18 @@
 #pragma once
 
 #include <utility>
+#include <tuple>
+#include <cstddef>
 
 #define FWD(x) std::forward<decltype(x)>(x)
 
 template <class T>
 using remove_cvref_t = std::remove_cv_t<std::remove_reference_t<T>>;
+
+template <class T>
+struct always_false : std::false_type {};
+template <class T>
+constexpr bool always_false_v = always_false<T>::value;
 
 template <class T>
 struct type_tag {
@@ -49,6 +56,12 @@ namespace detail {
 
 template <class CondT, class T>
 using copy_cref_t = typename decltype(detail::copy_cref_fn<CondT, T>())::type;
+
+
+template <class CondT, class T>
+constexpr decltype(auto) move_if_rvalue(T&& x) noexcept {
+    return static_cast<copy_ref_t<CondT&&, T>>(x);
+}
 
 template <class Tuple, template <class> class Map>
 struct map_tuple_types;

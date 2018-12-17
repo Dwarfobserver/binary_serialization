@@ -16,6 +16,15 @@ public:
         begin_{ array_traits<remove_cvref_t<Array>>::data(arr) },
         end_  { array_traits<remove_cvref_t<Array>>::size(arr) + begin_ }
     {}
+
+    span(T* data, size_t size) noexcept :
+        begin_{ data },
+        end_  { data + size }
+    {}
+    span(T* begin, T* end) noexcept :
+        begin_{ begin },
+        end_  { end }
+    {}
     
     auto& data()       noexcept { return begin_; }
     auto  data() const noexcept { return begin_; }

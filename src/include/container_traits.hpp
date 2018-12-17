@@ -98,9 +98,6 @@ namespace detail::no_adl {
         constexpr auto emplace_front_expr = [] (auto& arg) -> decltype(
             arg.emplace_front()
         ) {};
-        constexpr auto emplace_expr = [] (auto& arg) -> decltype(
-            arg.emplace()
-        ) {};
 
         if constexpr (std::is_invocable_v<decltype(emplace_back_expr), T&>) {
             return range.emplace_back();

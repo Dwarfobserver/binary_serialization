@@ -25,7 +25,7 @@ namespace detail::no_adl {
         constexpr auto expr = [] (auto&& val) -> decltype(
             std::get<0>(val)
         ) {};
-        return std::is_nothrow_invocable_v<decltype(expr), T>;
+        return std::is_invocable_v<decltype(expr), T>;
     }
 }
 
@@ -38,14 +38,18 @@ namespace detail {
         else if constexpr (std::is_trivially_copyable_v<T>) {
             return serialization_category::trivial;
         }
-        else if constexpr (is_array_v<T> && std::is_trivially_copyable_v<typename array_traits<T>::value_type>) {
-            return serialization_category::trivial_array;
-        }
-        else if constexpr (is_array_v<T> && has_fixed_size_v<T>) {
-            return serialization_category::fixed_array;
-        }
-        else if constexpr (is_dynamic_array_v<T>) {
-            return serialization_category::dynamic_array;
+        else if constexpr (is_array_v<T>) {
+            if constexpr (std::is_trivially_copyable_v<typename array_traits<T>::value_type>) {
+                static_assert(is_dynamic_array_v<T>);
+                return serialization_category::trivial_array;
+            }
+            else if constexpr (is_dynamic_array_v<T>) {
+                return serialization_category::dynamic_array;
+            }
+            else {
+                static_assert(has_fixed_size_v<T>);
+                return serialization_category::fixed_array;
+            }
         }
         else if constexpr (is_container_v<T>) {
             return serialization_category::container;
@@ -84,6 +88,11 @@ std::pair<size_t, bool> try_get_deserialized_size(span<std::byte const> buffer) 
 // serialize
 
 namespace detail {
+    template <class T, serialization_category Category>
+    void do_serialize(T const&, span<std::byte>&, value_tag<Category>) noexcept {
+        static_assert(serialization_category_v<T> != serialization_category::forbidden);
+        static_assert(serialization_category_v<T> != serialization_category::unknown);
+    }
     template <class T>
     void do_serialize(T const& value, span<std::byte>& buffer, value_tag<serialization_category::trivial>) noexcept {
         memcpy(buffer.data(), &value, sizeof(T));
@@ -100,7 +109,7 @@ namespace detail {
     }
 
     template <class T>
-    void serialize_range(T const& range, size_t size, span<std::byte>& buffer) noexcept {
+    void serialize_range(T const& range, span<std::byte>& buffer) noexcept {
         using traits = range_traits<T>;
         std::for_each(traits::begin(range), traits::end(range), [&] (auto& val) {
             serialize(val, buffer);
@@ -111,17 +120,17 @@ namespace detail {
     void do_serialize(T const& container, span<std::byte>& buffer, value_tag<serialization_category::container>) noexcept {
         size_t const count = range_traits<T>::size(container);
         serialize(count, buffer);
-        serialize_range(container, count, buffer);
+        serialize_range(container, buffer);
     }
     template <class T>
     void do_serialize(T const& array, span<std::byte>& buffer, value_tag<serialization_category::fixed_array>) noexcept {
-        serialize_range(array, get_fixed_size<T>(), buffer);
+        serialize_range(array, buffer);
     }
     template <class T>
     void do_serialize(T const& array, span<std::byte>& buffer, value_tag<serialization_category::dynamic_array>) noexcept {
         size_t const count = range_traits<T>::size(array);
         serialize(count, buffer);
-        serialize_range(array, count, buffer);
+        serialize_range(array, buffer);
     }
     template <class T>
     void do_serialize(T const& value, span<std::byte>& buffer, value_tag<serialization_category::tuple>) noexcept {
@@ -131,7 +140,7 @@ namespace detail {
     }
     template <class T>
     void do_serialize(T const& value, span<std::byte>& buffer, value_tag<serialization_category::aggregate>) noexcept {
-        serialize(as_tuple(value));
+        serialize(as_tuple(value), buffer);
     }
 }
 
@@ -143,8 +152,13 @@ void serialize(T const& value, span<std::byte>& buffer) noexcept {
 // get_serialized_size
 
 namespace detail {
+    template <class T, serialization_category Category>
+    constexpr void do_get_serialized_size(T const&, value_tag<Category>) noexcept {
+        static_assert(serialization_category_v<T> != serialization_category::forbidden);
+        static_assert(serialization_category_v<T> != serialization_category::unknown);
+    }
     template <class T>
-    constexpr size_t do_get_serialized_size(T const& value, value_tag<serialization_category::trivial>) noexcept {
+    constexpr size_t do_get_serialized_size(T const&, value_tag<serialization_category::trivial>) noexcept {
         return sizeof(T);
     }
     template <class T>
@@ -155,11 +169,18 @@ namespace detail {
     template <class T>
     constexpr size_t get_range_size(T const& range) noexcept {
         using traits = range_traits<T>;
-        size_t const size = 0;
-        std::for_each(traits::begin(range), traits::end(range), [&] (auto& val) {
-            size += get_serialized_size(val);
-        });
-        return size;
+        using value_type = typename traits::value_type;
+
+        if constexpr (serialization_category_v<value_type> == serialization_category::trivial) {
+            return traits::size(range) * sizeof(value_type);
+        }
+        else {
+            size_t size = 0;
+            std::for_each(traits::begin(range), traits::end(range), [&](auto& val) {
+                size += get_serialized_size(val);
+            });
+            return size;
+        }
     }
 
     template <class T>
@@ -194,6 +215,11 @@ constexpr size_t get_serialized_size(T const& value) noexcept {
 // deserialize
 
 namespace detail {
+    template <class T, serialization_category Category>
+    void do_deserialize(T&, span<std::byte const>&, value_tag<Category>) noexcept {
+        static_assert(serialization_category_v<T> != serialization_category::forbidden);
+        static_assert(serialization_category_v<T> != serialization_category::unknown);
+    }
     template <class T>
     void do_deserialize(T& value, span<std::byte const>& buffer, value_tag<serialization_category::trivial>) noexcept {
         memcpy(&value, buffer.data(), sizeof(T));
@@ -225,7 +251,8 @@ namespace detail {
 
     template <class T>
     void deserialize_array(T& array, size_t size, span<std::byte const>& buffer) {
-        for (auto ptr = array_traits<T>::data(array); ptr < size; ++ptr) {
+        auto const data = array_traits<T>::data(array);
+        for (auto ptr = data; ptr < data + size; ++ptr) {
             deserialize(*ptr, buffer);
         }
     }
@@ -250,7 +277,8 @@ namespace detail {
     }
     template <class T>
     void do_deserialize(T& value, span<std::byte const>& buffer, value_tag<serialization_category::aggregate>) {
-        deserialize(as_tuple(value), buffer);
+        auto tuple = as_tuple(value);
+        deserialize(tuple, buffer);
     }
 }
 
@@ -262,6 +290,11 @@ void deserialize(T& value, span<std::byte const>& buffer) {
 // try_get_deserialized_size
 
 namespace detail {
+    template <class T, serialization_category Category>
+    void do_try_get_deserialized_size(span<std::byte const>, value_tag<Category>) noexcept {
+        static_assert(serialization_category_v<T> != serialization_category::forbidden);
+        static_assert(serialization_category_v<T> != serialization_category::unknown);
+    }
     template <class T>
     std::pair<size_t, bool> do_try_get_deserialized_size(span<std::byte const> buffer, value_tag<serialization_category::trivial>) noexcept {
         return { sizeof(T), buffer.size() >= sizeof(T) };
@@ -269,7 +302,7 @@ namespace detail {
 
     template <class T>
     std::pair<size_t, bool> try_get_range_size(span<std::byte const> buffer) noexcept {
-        const auto data_begin = buffer.begin();
+        auto const data_begin = buffer.begin();
 
         size_t count;
         if (buffer.size() < sizeof(count)) return { {}, false };
@@ -277,13 +310,13 @@ namespace detail {
         
         using value_type = typename range_traits<T>::value_type;
         if constexpr (serialization_category_v<value_type> == serialization_category::trivial) {
-            const auto elements_size = count * sizeof(value_type);
+            auto const elements_size = count * sizeof(value_type);
             if (buffer.size() < elements_size) return { {}, false };
             buffer.begin() += elements_size;
         }
         else {
             for (size_t i = 0; i < count; ++i) {
-                const auto [size, success] = try_get_deserialized_size<value_type>(buffer);
+                auto const [size, success] = try_get_deserialized_size<value_type>(buffer);
                 if (!success) return { {}, false };
                 buffer.begin() += size;
             }
@@ -301,11 +334,11 @@ namespace detail {
     }
     template <class T>
     std::pair<size_t, bool> do_try_get_deserialized_size(span<std::byte const> buffer, value_tag<serialization_category::fixed_array>) noexcept {
-        const auto data_begin = buffer.begin();
+        auto const data_begin = buffer.begin();
 
         using value_type = typename range_traits<T>::value_type;
         for (size_t i = 0; i < get_fixed_size<T>(); ++i) {
-            const auto [size, success] = try_get_deserialized_size<value_type>(buffer);
+             auto const [size, success] = try_get_deserialized_size<value_type>(buffer);
             if (!success) return { {}, false };
             buffer.begin() += size;
         }
@@ -318,22 +351,22 @@ namespace detail {
     template <class T>
     std::pair<size_t, bool> do_try_get_deserialized_size(span<std::byte const> buffer, value_tag<serialization_category::tuple>) noexcept {
         return std::apply([&] (auto...tags) {
-            const auto data_begin = buffer.begin();
-            const auto try_one    = [&] (auto tag) {
+            auto const data_begin = buffer.begin();
+            auto const try_one    = [&] (auto tag) {
                 using value_type = typename decltype(tag)::type;
-                const auto [size, success] = try_get_deserialized_size<value_type>(buffer);
+                auto const [size, success] = try_get_deserialized_size<value_type>(buffer);
                 if (!success) return false;
                 buffer.begin() += size;
                 return true;
             };
-            const auto success = (try_one(tags) && ...);
+            auto const success = (try_one(tags) && ...);
             return std::pair<size_t, bool>{ buffer.begin() - data_begin, success };
         }, map_tuple_types_t<T, tag_type>{});
     }
     template <class T>
     std::pair<size_t, bool> do_try_get_deserialized_size(span<std::byte const> buffer, value_tag<serialization_category::aggregate>) noexcept {
-        using tuple_t = decltype(as_tuple(std::declval<T>()));
-        return try_get_deserialized_size<tuple_t>();
+        using tuple_t = decltype(to_tuple(std::declval<T>()));
+        return try_get_deserialized_size<tuple_t>(buffer);
     }
 }
 
