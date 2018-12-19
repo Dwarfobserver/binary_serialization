@@ -29,6 +29,25 @@ struct value_tag {
     static constexpr auto value = Value;
 };
 
+template <class T>
+struct remove_deep_constness {
+    using type = T;
+};
+template <class T>
+using remove_deep_constness_t = typename remove_deep_constness<T>::type;
+
+template <class T>
+struct remove_deep_constness<T const> {
+    using type = T;
+};
+template <template <class...> class Tuple, class...Ts>
+struct remove_deep_constness<Tuple<Ts...>> {
+    using type = Tuple<remove_deep_constness_t<Ts>...>;
+};
+
+template <class T>
+constexpr bool has_deep_constness_v = !std::is_same_v<T, remove_deep_constness_t<T>>;
+
 // copy (c)ref_t
 
 namespace detail {

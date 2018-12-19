@@ -67,7 +67,7 @@ namespace detail {
 }
 
 template <class T>
-constexpr auto serialization_category_v = detail::get_serialization_category<T>();
+constexpr auto serialization_category_v = detail::get_serialization_category<remove_cvref_t<T>>();
 template <class T>
 using serialization_category_tag_t = value_tag<serialization_category_v<T>>;
 
@@ -242,10 +242,18 @@ namespace detail {
         size_t count;
         deserialize(count, buffer);
 
+        using traits = container_traits<T>;
+        using value_type = typename traits::value_type;
         for (size_t i = 0; i < count; ++i) {
-            // TODO remove_deep_const_t version
-            auto& value = container_traits<T>::emplace(container);
-            deserialize(value, buffer);
+            if constexpr (has_deep_constness_v<value_type>) {
+                auto value = remove_deep_constness_t<value_type>{};
+                deserialize(value, buffer);
+                container_traits<T>::emplace(container, std::move(value));
+            }
+            else {
+                auto& value = container_traits<T>::emplace(container);
+                deserialize(value, buffer);
+            }
         }
     }
 
@@ -353,7 +361,7 @@ namespace detail {
         return std::apply([&] (auto...tags) {
             auto const data_begin = buffer.begin();
             auto const try_one    = [&] (auto tag) {
-                using value_type = typename decltype(tag)::type;
+                using value_type = remove_deep_constness_t<typename decltype(tag)::type>;
                 auto const [size, success] = try_get_deserialized_size<value_type>(buffer);
                 if (!success) return false;
                 buffer.begin() += size;

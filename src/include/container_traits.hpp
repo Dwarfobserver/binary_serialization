@@ -73,40 +73,40 @@ struct range_traits {
 // Container
 
 namespace detail::no_adl {
-    template <class T>
+    template <class T, class...Args>
     constexpr bool has_emplace() noexcept {
-        constexpr auto emplace_back_expr = [] (auto& arg) -> decltype(
-            arg.emplace_back()
+        constexpr auto emplace_back_expr = [] (auto& containter, auto&&...args) -> decltype(
+            containter.emplace_back()
         ) {};
-        constexpr auto emplace_front_expr = [] (auto& arg) -> decltype(
-            arg.emplace_front()
+        constexpr auto emplace_front_expr = [] (auto& containter, auto&&...args) -> decltype(
+            containter.emplace_front()
         ) {};
-        constexpr auto emplace_expr = [] (auto& arg) -> decltype(
-            arg.emplace()
+        constexpr auto emplace_expr = [] (auto& containter, auto&&...args) -> decltype(
+            containter.emplace()
         ) {};
 
-        return std::is_invocable_v<decltype(emplace_back_expr), T&>
-            || std::is_invocable_v<decltype(emplace_front_expr), T&> 
-            || std::is_invocable_v<decltype(emplace_expr), T&>;
+        return std::is_invocable_v<decltype(emplace_back_expr), T&, Args...>
+            || std::is_invocable_v<decltype(emplace_front_expr), T&, Args...> 
+            || std::is_invocable_v<decltype(emplace_expr), T&, Args...>;
     }
 
-    template <class T>
-    constexpr decltype(auto) call_emplace(T& range) {
-        constexpr auto emplace_back_expr = [] (auto& arg) -> decltype(
-            arg.emplace_back()
+    template <class T, class...Args>
+    constexpr decltype(auto) call_emplace(T& container, Args&&...args) {
+        constexpr auto emplace_back_expr = [] (auto& container, auto&&...args) -> decltype(
+            container.emplace_back(FWD(args)...)
         ) {};
-        constexpr auto emplace_front_expr = [] (auto& arg) -> decltype(
-            arg.emplace_front()
+        constexpr auto emplace_front_expr = [] (auto& container, auto&&...args) -> decltype(
+            container.emplace_front(FWD(args)...)
         ) {};
 
         if constexpr (std::is_invocable_v<decltype(emplace_back_expr), T&>) {
-            return range.emplace_back();
+            return container.emplace_back(FWD(args)...);
         }
         else if constexpr (std::is_invocable_v<decltype(emplace_front_expr), T&>) {
-            return range.emplace_front();
+            return container.emplace_front(FWD(args)...);
         }
         else {
-            return range.emplace();
+            return container.emplace(FWD(args)...);
         }
     }
 
@@ -127,8 +127,8 @@ constexpr auto is_container_v = is_range_v<T> && detail::no_adl::has_emplace<T>(
 template <class Container>
 struct container_traits : range_traits<Container> {
     static_assert(is_container_v<Container>);
-
-    static constexpr decltype(auto) emplace(Container& c) { return detail::no_adl::call_emplace(c); }
+    template <class...Args>
+    static constexpr decltype(auto) emplace(Container& c, Args&&...args) { return detail::no_adl::call_emplace(c, FWD(args)...); }
     static constexpr void try_reserve(Container& c) { detail::no_adl::try_reserve(c); }
 };
 
